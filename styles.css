@@ -158,6 +158,7 @@ body {
   width: 100%; max-width: 300px; aspect-ratio: 1; object-fit: cover;
   border-radius: 1.1rem; border: 1px solid var(--line);
   box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+  background: radial-gradient(circle at 50% 30%, rgba(139,124,246,0.16), transparent 72%);
 }
 .about-grid p { color: var(--muted); margin-bottom: 1.2rem; max-width: 38rem; }
 .oath { color: var(--ink) !important; font-family: var(--serif); font-size: 1.25rem; }
