@@ -137,7 +137,12 @@ if (fineMotion && heroBg) {
 
   // Watching eyes
   const wrap = document.getElementById("portrait-wrap");
-  const eyes = wrap ? [...wrap.querySelectorAll(".eye")] : [];
+  const eyes = wrap
+    ? [...wrap.querySelectorAll(".eye")].map((el) => ({
+        el,
+        tilt: getComputedStyle(el).getPropertyValue("--tilt").trim() || "0deg",
+      }))
+    : [];
 
   const loop = () => {
     // motes
@@ -167,16 +172,17 @@ if (fineMotion && heroBg) {
     // the eyes follow the cursor
     if (eyes.length && mx > -900) {
       const wr = wrap.getBoundingClientRect();
-      const cx = wr.left + wr.width / 2, cy = wr.top + wr.height * 0.25;
+      const cx = wr.left + wr.width / 2, cy = wr.top + wr.height * 0.156;
       const near = Math.hypot(mx - cx, my - cy) < 320;
       wrap.classList.toggle("watched", near);
-      for (const eye of eyes) {
-        const r = eye.getBoundingClientRect();
+      for (const { el, tilt } of eyes) {
+        const r = el.getBoundingClientRect();
         const ex = r.left + r.width / 2, ey = r.top + r.height / 2;
         const dx = mx - ex, dy = my - ey;
         const d = Math.hypot(dx, dy) || 1;
         const k = Math.min(4.5, d * 0.02);
-        eye.style.transform = `translate(${(dx / d * k).toFixed(2)}px, ${(dy / d * k).toFixed(2)}px)`;
+        el.style.transform =
+          `translate(-50%, -50%) translate(${(dx / d * k).toFixed(2)}px, ${(dy / d * k).toFixed(2)}px) rotate(${tilt})`;
       }
     } else if (wrap) {
       wrap.classList.remove("watched");
