@@ -181,13 +181,54 @@ const STRATEGIES = {
   },
 };
 
+/* ---------------- regime filters ----------------
+ * Optional confluence gates evaluated before entries (never exits —
+ * you don't want to be trapped in a position because a filter said
+ * "don't trade"). Gates are pure functions of past data with fixed
+ * round thresholds chosen from independent evidence, not tuned here.
+ *
+ * regime: {
+ *   usdtCandles: [[t,o,h,l,c,v],...] | null,  // 15m USDT/USD
+ *   maxUsdtDevBps: number,                    // 0 = off; skip entries when
+ *                                             // trailing-1h mean |USDT-1| exceeds this
+ * }
+ * A trailing-24h realized-vol gate was tested on 90d and cut: it only
+ * delayed entries rather than selecting trades (+0.69% -> +0.74%,
+ * statistically nothing) — confluence theater, not confluence.
+ * Returns {allow: boolean[], filtered: number} aligned to candles.
+ */
+function buildRegime(candles, buy, regime) {
+  const n = candles.length;
+  const allow = new Array(n).fill(true);
+  let filtered = 0;
+  if (!regime) return { allow, filtered };
+
+  if (regime.usdtCandles && regime.maxUsdtDevBps > 0) {
+    const um = new Map(regime.usdtCandles.map(c => [c[0], c[4]]));
+    for (let i = 0; i < n; i++) {
+      const t = candles[i][0];
+      let sum = 0, cnt = 0;
+      for (let k = 0; k < 4; k++) {
+        const u = um.get(t - k * 900000);
+        if (u !== undefined) { sum += Math.abs(u - 1); cnt++; }
+      }
+      if (cnt > 0 && (sum / cnt) * 1e4 > regime.maxUsdtDevBps) allow[i] = false;
+    }
+  }
+
+  for (let i = 0; i < n; i++) if (buy[i] && !allow[i]) filtered++;
+  return { allow, filtered };
+}
+
 /* ---------------- simulation ---------------- */
 
-function backtest(candles, strategyKey, sParams, risk) {
+function backtest(candles, strategyKey, sParams, risk, regime) {
   // candles: [[t, o, h, l, c, v], ...]
   // risk: {stake, stoplossPct, takeprofitPct, feePct, maxOpen, startBalance}
+  // regime: optional confluence gates, see buildRegime (entries only)
   const strat = STRATEGIES[strategyKey];
   const { buy, sell } = strat.signals(candles, sParams);
+  const { allow, filtered } = buildRegime(candles, buy, regime);
   const fee = risk.feePct / 100;
   const sl = risk.stoplossPct / 100;
   const tp = risk.takeprofitPct > 0 ? risk.takeprofitPct / 100 : Infinity;
@@ -232,8 +273,8 @@ function backtest(candles, strategyKey, sParams, risk) {
       }
     }
 
-    // 2) entries
-    if (buy[i] && open.length < risk.maxOpen && cash >= risk.stake * (1 + fee)) {
+    // 2) entries (gated by regime filters)
+    if (buy[i] && allow[i] && open.length < risk.maxOpen && cash >= risk.stake * (1 + fee)) {
       const amount = (risk.stake * (1 - fee)) / c;
       cash -= risk.stake;
       open.push({ entryPrice: c, amount, entryIdx: i, entryTime: t });
@@ -253,7 +294,7 @@ function backtest(candles, strategyKey, sParams, risk) {
   }
   equity[equity.length - 1] = cash;
 
-  return { trades, equity, markers, stats: summarize(trades, equity, risk.startBalance, candles) };
+  return { trades, equity, markers, filtered, stats: summarize(trades, equity, risk.startBalance, candles) };
 }
 
 function summarize(trades, equity, startBalance, candles) {
@@ -296,4 +337,4 @@ function summarize(trades, equity, startBalance, candles) {
 }
 
 // node test hook — harmless in the browser
-if (typeof module !== "undefined") module.exports = { sma, ema, rsi, macd, bollinger, STRATEGIES, backtest };
+if (typeof module !== "undefined") module.exports = { sma, ema, rsi, macd, bollinger, STRATEGIES, buildRegime, backtest };

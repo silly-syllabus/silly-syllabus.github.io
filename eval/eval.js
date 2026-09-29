@@ -7,6 +7,7 @@ const DATA = (pair, tf) => `data/${pair.replace("/", "_")}_${tf}.json`;
 let candles = null;   // [[t,o,h,l,c,v],...]
 let meta = null;
 let lastResult = null;
+let usdtCandles = null, usdtTried = false;  // 15m USDT/USD for the regime gate
 
 const fmtCAD = (v, dp = 0) =>
   v.toLocaleString("en-CA", { minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -196,6 +197,17 @@ function getRisk() {
   };
 }
 
+function getRegime() {
+  if (!$("usdt-on").checked || !usdtCandles) return null;
+  return { usdtCandles, maxUsdtDevBps: parseFloat($("usdt-bps").value) };
+}
+
+function regimeNote() {
+  if (!$("usdt-on").checked) return "";
+  if (!usdtCandles) return ` <span class="reason-pill">USDT data unavailable — gate inactive</span>`;
+  return "";
+}
+
 const RISK_FIELDS = [
   ["stake", "stake-out", (v) => `${fmtCAD(v)} CAD`],
   ["stoploss", "stoploss-out", (v) => `${v}%`],
@@ -244,7 +256,9 @@ function render(result) {
   rEl.hidden = false;
   rEl.innerHTML = Object.entries(reasons)
     .map(([k, v]) => `<span class="reason-pill">${k} <b>×${v}</b></span>`)
-    .join("") || `<span class="reason-pill">no trades taken</span>`;
+    .join("") +
+    (result.filtered > 0 ? `<span class="reason-pill">regime skipped <b>×${result.filtered}</b></span>` : "") +
+    regimeNote() || `<span class="reason-pill">no trades taken</span>`;
 
   const last = candles[candles.length - 1][4];
   $("price-now").innerHTML = `last <b>${fmtCAD(last)} CAD</b>`;
@@ -277,7 +291,7 @@ function run() {
   // let the UI paint the running state before the (fast) synchronous compute
   requestAnimationFrame(() => setTimeout(() => {
     try {
-      lastResult = backtest(candles, $("strategy").value, getParams(), getRisk());
+      lastResult = backtest(candles, $("strategy").value, getParams(), getRisk(), getRegime());
       render(lastResult);
     } finally {
       btn.classList.remove("running");
@@ -287,10 +301,20 @@ function run() {
 
 /* ---------- data ---------- */
 
+async function loadUsdt() {
+  if (usdtTried) return;
+  usdtTried = true;
+  try {
+    const res = await fetch("data/USDT_USD_15m.json");
+    if (res.ok) usdtCandles = (await res.json()).candles;
+  } catch { /* gate simply stays unavailable */ }
+}
+
 async function loadData() {
   const pair = $("pair").value, tf = $("timeframe").value;
   $("run").disabled = true;
   $("data-note").textContent = "Summoning candles…";
+  loadUsdt().then(() => { if ($("usdt-on").checked) run(); });
   try {
     const res = await fetch(DATA(pair, tf));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -346,7 +370,12 @@ function applyDeepLink() {
   for (const [id, qk] of Object.entries(RISK_QUERY_KEYS)) {
     if (q.has(qk)) clampToSlider($(id), q.get(qk));
   }
+  if (q.has("usdt")) {
+    $("usdt-on").checked = true;
+    clampToSlider($("usdt-bps"), q.get("usdt"));
+  }
   refreshRiskOutputs();
+  refreshRegimeOutput();
 }
 
 function shareLink() {
@@ -361,6 +390,7 @@ function shareLink() {
   u.searchParams.set("tp", $("takeprofit").value);
   u.searchParams.set("fee", $("fee").value);
   u.searchParams.set("maxopen", $("maxopen").value);
+  if ($("usdt-on").checked) u.searchParams.set("usdt", $("usdt-bps").value);
   return u.toString();
 }
 
@@ -376,10 +406,22 @@ async function shareCurrent() {
   setTimeout(() => { btn.textContent = label; }, 1600);
 }
 
+function refreshRegimeOutput() {
+  $("usdt-bps-out").textContent = `${$("usdt-bps").value} bps`;
+}
+
+function wireRegime() {
+  $("usdt-bps").addEventListener("input", refreshRegimeOutput);
+  $("usdt-bps").addEventListener("change", run);
+  $("usdt-on").addEventListener("change", run);
+}
+
 /* ---------- init ---------- */
 
 buildStrategyControls();
 wireRiskOutputs();
+wireRegime();
+refreshRegimeOutput();
 applyDeepLink();
 $("run").addEventListener("click", run);
 $("share").addEventListener("click", shareCurrent);

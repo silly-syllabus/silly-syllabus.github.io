@@ -51,6 +51,10 @@
 .field input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
 
 .strat-blurb { font-size: 0.85rem; color: var(--muted); font-style: italic; margin: -0.4rem 0 1.2rem; min-height: 2.6em; }
+.field-note { font-size: 0.8rem; color: var(--muted); font-style: italic; margin: -0.2rem 0 1rem; line-height: 1.45; }
+.check-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.9rem; }
+.check-row input[type="checkbox"] { accent-color: var(--accent); width: 1.05rem; height: 1.05rem; cursor: pointer; }
+.check-row label { font-size: 0.85rem; color: var(--ink); cursor: pointer; }
 .risk-title {
   font-size: 0.78rem; letter-spacing: 0.28em; text-transform: uppercase;
   color: var(--faint); margin: 1.6rem 0 1rem; padding-top: 1.2rem;
