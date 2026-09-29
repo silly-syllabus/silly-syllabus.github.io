@@ -69,6 +69,14 @@
 .run-btn.running { animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.65; } }
 
+.link-btn {
+  width: 100%; margin-top: 0.7rem; padding: 0.8rem;
+  background: transparent; border: 1px solid rgba(139,124,246,0.4); border-radius: 999px;
+  color: #b7aef5; font-family: var(--sans); font-size: 0.92rem; cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+}
+.link-btn:hover { border-color: var(--accent); color: #e6e1ff; }
+
 .chart-card { margin-bottom: 1.4rem; }
 .chart-head {
   display: flex; justify-content: space-between; align-items: baseline;

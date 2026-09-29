@@ -196,17 +196,24 @@ function getRisk() {
   };
 }
 
+const RISK_FIELDS = [
+  ["stake", "stake-out", (v) => `${fmtCAD(v)} CAD`],
+  ["stoploss", "stoploss-out", (v) => `${v}%`],
+  ["takeprofit", "takeprofit-out", (v) => `${v}%`],
+  ["fee", "fee-out", (v) => `${v.toFixed(2)}%`],
+  ["maxopen", "maxopen-out", (v) => `${v}`],
+];
+
+function refreshRiskOutputs() {
+  for (const [id, out, fmt] of RISK_FIELDS) {
+    $(out).textContent = fmt(parseFloat($(id).value));
+  }
+}
+
 function wireRiskOutputs() {
-  const pairs = [
-    ["stake", "stake-out", (v) => `${fmtCAD(v)} CAD`],
-    ["stoploss", "stoploss-out", (v) => `${v}%`],
-    ["takeprofit", "takeprofit-out", (v) => `${v}%`],
-    ["fee", "fee-out", (v) => `${v.toFixed(2)}%`],
-    ["maxopen", "maxopen-out", (v) => `${v}`],
-  ];
-  for (const [id, out, fmt] of pairs) {
+  for (const [id, , ] of RISK_FIELDS) {
     const el = $(id);
-    el.addEventListener("input", () => { $(out).textContent = fmt(parseFloat(el.value)); });
+    el.addEventListener("input", refreshRiskOutputs);
     el.addEventListener("change", run);
   }
 }
@@ -302,11 +309,80 @@ async function loadData() {
   }
 }
 
+/* ---------- deep links ---------- */
+
+const RISK_QUERY_KEYS = { stake: "stake", stoploss: "sl", takeprofit: "tp", fee: "fee", maxopen: "maxopen" };
+
+function clampToSlider(el, v) {
+  const n = parseFloat(v);
+  if (Number.isNaN(n)) return;
+  el.value = Math.min(parseFloat(el.max), Math.max(parseFloat(el.min), n));
+}
+
+// Read ?pair=&tf=&strategy=&<strategy params>&stake=&sl=&tp=&fee=&maxopen=
+// and pre-set every control. Called after the controls are built; loadData()
+// then auto-runs the backtest with the linked settings.
+function applyDeepLink() {
+  const q = new URLSearchParams(location.search);
+  if ([...q.keys()].length === 0) return;
+
+  const setSel = (id, v) => {
+    const el = $(id);
+    if ([...el.options].some((o) => o.value === v)) el.value = v;
+  };
+  if (q.has("pair")) setSel("pair", q.get("pair").replace("_", "/"));
+  if (q.has("tf")) setSel("timeframe", q.get("tf"));
+  if (q.has("strategy")) {
+    setSel("strategy", q.get("strategy"));
+    buildParamFields();
+  }
+
+  for (const def of STRATEGIES[$("strategy").value].params) {
+    if (!q.has(def.key)) continue;
+    const el = $("in-" + def.key);
+    clampToSlider(el, q.get(def.key));
+    $("p-" + def.key).textContent = el.value;
+  }
+  for (const [id, qk] of Object.entries(RISK_QUERY_KEYS)) {
+    if (q.has(qk)) clampToSlider($(id), q.get(qk));
+  }
+  refreshRiskOutputs();
+}
+
+function shareLink() {
+  const base = location.href.split("?")[0].split("#")[0];
+  const u = new URL(base);
+  u.searchParams.set("pair", $("pair").value.replace("/", "_"));
+  u.searchParams.set("tf", $("timeframe").value);
+  u.searchParams.set("strategy", $("strategy").value);
+  for (const [k, v] of Object.entries(getParams())) u.searchParams.set(k, v);
+  u.searchParams.set("stake", $("stake").value);
+  u.searchParams.set("sl", $("stoploss").value);
+  u.searchParams.set("tp", $("takeprofit").value);
+  u.searchParams.set("fee", $("fee").value);
+  u.searchParams.set("maxopen", $("maxopen").value);
+  return u.toString();
+}
+
+async function shareCurrent() {
+  const btn = $("share");
+  const label = btn.textContent;
+  try {
+    await navigator.clipboard.writeText(shareLink());
+    btn.textContent = "Link copied";
+  } catch {
+    btn.textContent = "Copy failed — share the URL by hand";
+  }
+  setTimeout(() => { btn.textContent = label; }, 1600);
+}
+
 /* ---------- init ---------- */
 
 buildStrategyControls();
 wireRiskOutputs();
+applyDeepLink();
 $("run").addEventListener("click", run);
+$("share").addEventListener("click", shareCurrent);
 $("pair").addEventListener("change", loadData);
 $("timeframe").addEventListener("change", loadData);
 window.addEventListener("resize", () => {
