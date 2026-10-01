@@ -8,6 +8,7 @@ let candles = null;   // [[t,o,h,l,c,v],...]
 let meta = null;
 let lastResult = null;
 let usdtCandles = null, usdtTried = false;  // 15m USDT/USD for the regime gate
+let ethCandles = null, ethTried = false;    // 15m ETH/CAD for the ETH confirmation gate
 
 const fmtCAD = (v, dp = 0) =>
   v.toLocaleString("en-CA", { minimumFractionDigits: dp, maximumFractionDigits: dp });
@@ -198,14 +199,28 @@ function getRisk() {
 }
 
 function getRegime() {
-  if (!$("usdt-on").checked || !usdtCandles) return null;
-  return { usdtCandles, maxUsdtDevBps: parseFloat($("usdt-bps").value) };
+  const r = {};
+  let any = false;
+  if ($("usdt-on").checked && usdtCandles) {
+    r.usdtCandles = usdtCandles;
+    r.maxUsdtDevBps = parseFloat($("usdt-bps").value);
+    any = true;
+  }
+  if ($("eth-on").checked && ethCandles && $("pair").value === "BTC/CAD") {
+    r.ethCandles = ethCandles;
+    r.ethOn = true;
+    r.ethRsiThreshold = parseFloat($("eth-rsi").value);
+    any = true;
+  }
+  return any ? r : null;
 }
 
 function regimeNote() {
-  if (!$("usdt-on").checked) return "";
-  if (!usdtCandles) return ` <span class="reason-pill">USDT data unavailable — gate inactive</span>`;
-  return "";
+  let s = "";
+  if ($("usdt-on").checked && !usdtCandles) s += ` <span class="reason-pill">USDT data unavailable — gate inactive</span>`;
+  if ($("eth-on").checked && $("pair").value === "BTC/CAD" && !ethCandles) s += ` <span class="reason-pill">ETH data unavailable — confirmation inactive</span>`;
+  if ($("eth-on").checked && $("pair").value !== "BTC/CAD") s += ` <span class="reason-pill">ETH confirmation applies to BTC/CAD only</span>`;
+  return s;
 }
 
 const RISK_FIELDS = [
@@ -257,7 +272,8 @@ function render(result) {
   rEl.innerHTML = Object.entries(reasons)
     .map(([k, v]) => `<span class="reason-pill">${k} <b>×${v}</b></span>`)
     .join("") +
-    (result.filtered > 0 ? `<span class="reason-pill">regime skipped <b>×${result.filtered}</b></span>` : "") +
+    (result.filteredUsdt > 0 ? `<span class="reason-pill">USDT skipped <b>×${result.filteredUsdt}</b></span>` : "") +
+    (result.filteredEth > 0 ? `<span class="reason-pill">ETH skipped <b>×${result.filteredEth}</b></span>` : "") +
     regimeNote() || `<span class="reason-pill">no trades taken</span>`;
 
   const last = candles[candles.length - 1][4];
@@ -310,11 +326,21 @@ async function loadUsdt() {
   } catch { /* gate simply stays unavailable */ }
 }
 
+async function loadEth() {
+  if (ethTried) return;
+  ethTried = true;
+  try {
+    const res = await fetch("data/ETH_CAD_15m.json");
+    if (res.ok) ethCandles = (await res.json()).candles;
+  } catch { /* confirmation simply stays unavailable */ }
+}
+
 async function loadData() {
   const pair = $("pair").value, tf = $("timeframe").value;
   $("run").disabled = true;
   $("data-note").textContent = "Summoning candles…";
   loadUsdt().then(() => { if ($("usdt-on").checked) run(); });
+  if (pair === "BTC/CAD") loadEth().then(() => { if ($("eth-on").checked) run(); });
   try {
     const res = await fetch(DATA(pair, tf));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -374,6 +400,10 @@ function applyDeepLink() {
     $("usdt-on").checked = true;
     clampToSlider($("usdt-bps"), q.get("usdt"));
   }
+  if (q.has("eth")) {
+    $("eth-on").checked = true;
+    clampToSlider($("eth-rsi"), q.get("eth"));
+  }
   refreshRiskOutputs();
   refreshRegimeOutput();
 }
@@ -391,6 +421,7 @@ function shareLink() {
   u.searchParams.set("fee", $("fee").value);
   u.searchParams.set("maxopen", $("maxopen").value);
   if ($("usdt-on").checked) u.searchParams.set("usdt", $("usdt-bps").value);
+  if ($("eth-on").checked) u.searchParams.set("eth", $("eth-rsi").value);
   return u.toString();
 }
 
@@ -408,12 +439,16 @@ async function shareCurrent() {
 
 function refreshRegimeOutput() {
   $("usdt-bps-out").textContent = `${$("usdt-bps").value} bps`;
+  $("eth-rsi-out").textContent = `${$("eth-rsi").value}`;
 }
 
 function wireRegime() {
   $("usdt-bps").addEventListener("input", refreshRegimeOutput);
   $("usdt-bps").addEventListener("change", run);
   $("usdt-on").addEventListener("change", run);
+  $("eth-rsi").addEventListener("input", refreshRegimeOutput);
+  $("eth-rsi").addEventListener("change", run);
+  $("eth-on").addEventListener("change", run);
 }
 
 /* ---------- init ---------- */

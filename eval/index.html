@@ -87,6 +87,16 @@
         <input type="range" id="usdt-bps" min="1" max="20" step="1" value="4">
       </div>
 
+      <div class="check-row">
+        <input type="checkbox" id="eth-on">
+        <label for="eth-on">Require ETH confirmation</label>
+      </div>
+      <p class="field-note">Only buys the BTC dip when ETH's hourly RSI is washed out too — a dip ETH doesn't share is a wobble, not a washout. (BTC/CAD only.)</p>
+      <div class="field">
+        <label for="eth-rsi">ETH 1h RSI below <output id="eth-rsi-out">40</output></label>
+        <input type="range" id="eth-rsi" min="10" max="60" step="1" value="40">
+      </div>
+
       <button class="run-btn" id="run" disabled>Run backtest</button>
       <button class="link-btn" id="share" type="button">Copy link to this setup</button>
     </aside>

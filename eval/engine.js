@@ -191,17 +191,54 @@ const STRATEGIES = {
  *   usdtCandles: [[t,o,h,l,c,v],...] | null,  // 15m USDT/USD
  *   maxUsdtDevBps: number,                    // 0 = off; skip entries when
  *                                             // trailing-1h mean |USDT-1| exceeds this
+ *   ethCandles: [[t,o,h,l,c,v],...] | null,   // 15m ETH/CAD, resampled to 1h
+ *   ethOn: boolean,                           // require ETH 1h RSI(14) < ethRsiThreshold
+ *   ethRsiThreshold: number,                  // 0 = off
  * }
  * A trailing-24h realized-vol gate was tested on 90d and cut: it only
  * delayed entries rather than selecting trades (+0.69% -> +0.74%,
  * statistically nothing) — confluence theater, not confluence.
- * Returns {allow: boolean[], filtered: number} aligned to candles.
+ * ETH confirmation earned its place in round 2 (2026-10-01, 13
+ * pre-registered candidates, IS/OOS split): BTC RSI<35 AND ETH 1h
+ * RSI<40 kept 14 of 16 trades, avg +0.86% -> +1.18%/trade, PF
+ * 2.20 -> 3.01, improving in both splits. A dip ETH doesn't share is
+ * a wobble, not a washout. ETH 1h RSI is ffill'd from completed hourly
+ * bars — no lookahead.
+ * Returns {allow: boolean[], filtered: number, filteredUsdt: number,
+ *          filteredEth: number} aligned to candles.
  */
+function resampleHours(candles) {
+  // Resample sub-hourly candles to right-labeled hourly bars, matching
+  // pandas resample("1h", label="right", closed="right") used by the
+  // research harness: bar L aggregates candles with opens in (L-1h, L].
+  // Already-hourly (or slower) candles pass through with left labels.
+  const ms = candles.length > 1 ? candles[1][0] - candles[0][0] : 3600000;
+  if (ms >= 3600000) return candles;
+  const hour = 3600000;
+  const out = [];
+  let cur = null; // [label, o, h, l, c, v]
+  for (const c of candles) {
+    // a candle opened exactly on the hour belongs to the bar ending there
+    const L = Math.floor((c[0] - 1) / hour) * hour + hour;
+    if (!cur || cur[0] !== L) {
+      if (cur) out.push(cur);
+      cur = [L, c[1], c[2], c[3], c[4], c[5]];
+    } else {
+      cur[2] = Math.max(cur[2], c[2]);
+      cur[3] = Math.min(cur[3], c[3]);
+      cur[4] = c[4];
+      cur[5] += c[5];
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 function buildRegime(candles, buy, regime) {
   const n = candles.length;
   const allow = new Array(n).fill(true);
-  let filtered = 0;
-  if (!regime) return { allow, filtered };
+  let filtered = 0, filteredUsdt = 0, filteredEth = 0;
+  if (!regime) return { allow, filtered, filteredUsdt, filteredEth };
 
   if (regime.usdtCandles && regime.maxUsdtDevBps > 0) {
     const um = new Map(regime.usdtCandles.map(c => [c[0], c[4]]));
@@ -212,12 +249,39 @@ function buildRegime(candles, buy, regime) {
         const u = um.get(t - k * 900000);
         if (u !== undefined) { sum += Math.abs(u - 1); cnt++; }
       }
-      if (cnt > 0 && (sum / cnt) * 1e4 > regime.maxUsdtDevBps) allow[i] = false;
+      if (cnt > 0 && (sum / cnt) * 1e4 > regime.maxUsdtDevBps) {
+        if (buy[i]) filteredUsdt++;
+        allow[i] = false;
+      }
+    }
+  }
+
+  if (regime.ethCandles && regime.ethOn && regime.ethRsiThreshold > 0) {
+    const hourly = resampleHours(regime.ethCandles);
+    const er = rsi(hourly.map(c => c[4]), 14);
+    const em = new Map();
+    for (let i = 0; i < hourly.length; i++) {
+      if (!Number.isNaN(er[i])) em.set(hourly[i][0], er[i]);
+    }
+    const msPerCandle = candles.length > 1 ? candles[1][0] - candles[0][0] : 900000;
+    for (let i = 0; i < n; i++) {
+      const t = candles[i][0];
+      // Latest hourly bar fully complete at this candle's close (no lookahead).
+      // Sub-hourly: right-labeled bar L is complete at L+15m (its last 15m bar),
+      // so L <= t+msPerCandle-15m. Hourly+: the candle's own left-labeled bar.
+      const key = msPerCandle >= 3600000
+        ? t
+        : Math.floor((t + msPerCandle - 900000) / 3600000) * 3600000;
+      const v = em.get(key);
+      if (v !== undefined && v >= regime.ethRsiThreshold) {
+        if (buy[i]) filteredEth++;
+        allow[i] = false;
+      }
     }
   }
 
   for (let i = 0; i < n; i++) if (buy[i] && !allow[i]) filtered++;
-  return { allow, filtered };
+  return { allow, filtered, filteredUsdt, filteredEth };
 }
 
 /* ---------------- simulation ---------------- */
@@ -228,7 +292,7 @@ function backtest(candles, strategyKey, sParams, risk, regime) {
   // regime: optional confluence gates, see buildRegime (entries only)
   const strat = STRATEGIES[strategyKey];
   const { buy, sell } = strat.signals(candles, sParams);
-  const { allow, filtered } = buildRegime(candles, buy, regime);
+  const { allow, filtered, filteredUsdt, filteredEth } = buildRegime(candles, buy, regime);
   const fee = risk.feePct / 100;
   const sl = risk.stoplossPct / 100;
   const tp = risk.takeprofitPct > 0 ? risk.takeprofitPct / 100 : Infinity;
@@ -294,7 +358,7 @@ function backtest(candles, strategyKey, sParams, risk, regime) {
   }
   equity[equity.length - 1] = cash;
 
-  return { trades, equity, markers, filtered, stats: summarize(trades, equity, risk.startBalance, candles) };
+  return { trades, equity, markers, filtered, filteredUsdt, filteredEth, stats: summarize(trades, equity, risk.startBalance, candles) };
 }
 
 function summarize(trades, equity, startBalance, candles) {
@@ -337,4 +401,4 @@ function summarize(trades, equity, startBalance, candles) {
 }
 
 // node test hook — harmless in the browser
-if (typeof module !== "undefined") module.exports = { sma, ema, rsi, macd, bollinger, STRATEGIES, buildRegime, backtest };
+if (typeof module !== "undefined") module.exports = { sma, ema, rsi, macd, bollinger, STRATEGIES, resampleHours, buildRegime, backtest };
